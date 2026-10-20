@@ -93,8 +93,6 @@ function qs(params) {
   return `?${search.toString()}`;
 }
 
-const TONES = ['#67e8f9', '#a78bfa', '#4ade80', '#fbbf24', '#f472b6'];
-
 function tzOffsetMinutes(tz, when = new Date()) {
   try {
     const parts = new Intl.DateTimeFormat('en-US', {
@@ -298,6 +296,37 @@ function renderOfficeChips() {
   });
 }
 
+/* ============================================================ theme */
+const THEME_KEY = 'roomloop.theme';
+
+function currentTheme() {
+  return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+}
+
+function applyTheme(theme) {
+  const next = theme === 'dark' ? 'dark' : 'light';
+  document.documentElement.dataset.theme = next;
+  const button = $('#theme-toggle');
+  if (button) {
+    const label = next === 'dark' ? 'Switch to light theme' : 'Switch to dark theme';
+    button.setAttribute('aria-label', label);
+    button.setAttribute('title', label);
+    button.setAttribute('aria-pressed', String(next === 'dark'));
+  }
+}
+
+function initTheme() {
+  // The saved value was already applied by the inline script in <head>.
+  applyTheme(currentTheme());
+  const button = $('#theme-toggle');
+  if (!button) return;
+  button.addEventListener('click', () => {
+    const next = currentTheme() === 'dark' ? 'light' : 'dark';
+    applyTheme(next);
+    try { localStorage.setItem(THEME_KEY, next); } catch (error) { /* private mode */ }
+  });
+}
+
 /* ============================================================ calendar */
 async function renderCalendar() {
   $('#day-label').textContent = longDate(state.day);
@@ -328,6 +357,8 @@ async function renderCalendar() {
     const nowMin = hour * 60 + minute;
     const isToday = officeDate(tz) === state.day;
     const showNow = isToday && nowMin >= DAY_START && nowMin <= DAY_END;
+    const clockLabel = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+    const nowTip = `Now · ${clockLabel} ${office}`;
 
     parts.push(`
       <div class="office-row">
@@ -377,7 +408,9 @@ async function renderCalendar() {
           <div class="tl-track" style="height:${rowHeight}px">
             ${items.length ? '' : '<span class="tl-free">Free</span>'}
             ${pills}
-            ${showNow ? `<span class="now-line" style="left:${((nowMin - DAY_START) / span) * 100}%"></span>` : ''}
+            ${showNow ? `<span class="now-line" style="left:${((nowMin - DAY_START) / span) * 100}%"
+              tabindex="0" role="img" data-tip="${esc(nowTip)}"
+              aria-label="${esc(nowTip)}"><span class="now-dot"></span></span>` : ''}
           </div>
         </div>`);
     });
@@ -1187,6 +1220,7 @@ function bindUi() {
 }
 
 async function bootstrap() {
+  initTheme();
   bindUi();
   tickClocks();
   setInterval(tickClocks, 15000);

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date
 
 from fastapi.testclient import TestClient
@@ -70,3 +71,41 @@ def test_root_redirects_to_the_console() -> None:
     response = client.get("/")
     assert response.status_code in (302, 307)
     assert response.headers["location"] == "/console"
+
+
+def test_console_ships_two_themes_with_a_toggle() -> None:
+    """Light is the default; the dark palette is a swap of custom properties only."""
+    client = TestClient(create_app(":memory:"))
+    page = client.get("/console").text
+    css = client.get("/static/styles.css").text
+    script = client.get("/static/app.js").text
+
+    assert 'data-theme="light"' in page  # light, not the browser default
+    assert 'id="theme-toggle"' in page
+    assert "roomloop.theme" in page  # applied before first paint, so no flash
+    assert ":root {" in css and '[data-theme="dark"] {' in css
+    assert "localStorage.setItem(THEME_KEY" in script
+
+
+def test_every_theme_token_used_is_also_defined() -> None:
+    """A renamed custom property fails silently: the rule just renders nothing.
+
+    ``--accent-dim`` -> ``--accent-soft`` broke five rules that way during the
+    theme work, which is exactly the kind of defect no screenshot catches.
+    """
+    client = TestClient(create_app(":memory:"))
+    css = client.get("/static/styles.css").text
+
+    used = set(re.findall(r"var\(--([\w-]+)\)", css))
+    defined = set(re.findall(r"^\s*--([\w-]+)\s*:", css, re.MULTILINE))
+    assert used <= defined, f"undefined custom properties: {sorted(used - defined)}"
+
+
+def test_now_marker_carries_its_own_timestamp() -> None:
+    """The vertical rule is only useful if it can tell you what time it marks."""
+    client = TestClient(create_app(":memory:"))
+    script = client.get("/static/app.js").text
+
+    assert "now-line" in script and "now-dot" in script
+    assert 'data-tip="${esc(nowTip)}"' in script
+    assert "Now \u00b7 " in script  # "Now · 17:02 Berlin"

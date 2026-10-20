@@ -7,7 +7,7 @@
 **Booking core for meeting rooms.** Single bookings, weekly recurring series, cancellation,
 and availability — correct across DST, in two offices, behind one small API.
 
-[![tests](https://img.shields.io/badge/tests-92%20passing-2ea043?style=flat-square)](#-how-this-was-verified)
+[![tests](https://img.shields.io/badge/tests-95%20passing-2ea043?style=flat-square)](#-how-this-was-verified)
 [![python](https://img.shields.io/badge/python-3.11%2B-3776ab?style=flat-square&logo=python&logoColor=white)](#-quick-start)
 [![fastapi](https://img.shields.io/badge/FastAPI-0.110%2B-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![sqlite](https://img.shields.io/badge/SQLite-3-003b57?style=flat-square&logo=sqlite&logoColor=white)](#)
@@ -130,6 +130,18 @@ python -m uvicorn roomloop.api:app --reload
 ```
 
 Keyboard: `1`–`4` switch views · `←`/`→` change day · `n` new booking · `Esc` closes.
+
+**Theme.** Light by default, dark one click away (the sun/moon control in the top
+bar). The choice is stored in `localStorage` and applied by a small inline script
+before first paint, so a dark-mode visitor never sees a white flash. Both palettes
+are the same stylesheet with a different set of custom properties — every text and
+background pair was checked against WCAG AA (4.5:1), which is also why the muted
+grey is darker than it first looked.
+
+**The now marker.** The thin red rule on the calendar is the current time in that
+office's wall clock — which is why Berlin's sits at 16:47 while Denver's sits at
+08:47 for the same instant. Hovering (or tabbing to) it shows the office and the
+time it marks, so the line never has to be interpreted from position alone.
 
 ## 🔌 API in one screen
 
@@ -254,7 +266,7 @@ wall-clock calculation depends on it.
 
 | Check | What it proves |
 | --- | --- |
-| **92 tests**, `python -m pytest -q` in ~2s | Every requirement and constraint has an executable definition |
+| **95 tests**, `python -m pytest -q` in ~2s | Every requirement and constraint has an executable definition |
 | [`data/scenarios.json`](data/scenarios.json) — 12 scenarios, each with a `why` | The edge cases are reviewable as *data*, not buried in test code |
 | `tests/test_concurrency.py` | Eight racing requests at one slot, exactly one wins — R1 is real, not asserted |
 | Berlin **and** Denver around their own DST dates | The offset moves, the wall clock does not |
@@ -286,7 +298,7 @@ roomloop/
 └── static/        console — index.html, styles.css, app.js (no build step)
 
 data/scenarios.json   12 acceptance scenarios with rationale
-tests/                92 tests: domain, API, scenarios, concurrency, environment
+tests/                95 tests: domain, API, scenarios, concurrency, environment
 docs/                 API reference, interview walkthrough, diagrams
 DECISIONS.md          trade-offs, open questions, AI usage, what is missing
 ```
