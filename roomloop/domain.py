@@ -105,13 +105,46 @@ class IdempotencyKeyReused(ConflictError):
     code = "IDEMPOTENCY_KEY_REUSED"
 
 
+class TimeZoneDataMissing(RoomLoopError):
+    """The host has no IANA timezone database (typical on Windows).
+
+    This is an environment problem, not a bad request: it must not be reported
+    as a 422, otherwise the caller blames their payload instead of their install.
+    """
+
+    code = "TZ_DATA_MISSING"
+    status = 500
+
+
 # ---------------------------------------------------------------------------
 # Timezone helpers
 # ---------------------------------------------------------------------------
+def timezone_database_available() -> bool:
+    """True when the host can resolve IANA zone names.
+
+    ``zoneinfo`` reads the tz database from the operating system. Windows ships
+    without one, so the ``tzdata`` package must be installed; Alpine images have
+    the same problem unless ``tzdata`` is added.
+    """
+    try:
+        ZoneInfo("UTC")
+        return True
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        return False
+
+
+TZ_DATA_HINT = (
+    "This host has no IANA timezone database. Install it with: "
+    "python -m pip install tzdata (Windows and minimal container images need this)."
+)
+
+
 def get_zone(name: str) -> ZoneInfo:
     try:
         return ZoneInfo(name)
-    except (ZoneInfoNotFoundError, ValueError) as exc:  # pragma: no cover - defensive
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        if not timezone_database_available():
+            raise TimeZoneDataMissing(TZ_DATA_HINT, details={"timezone": name}) from exc
         raise ValidationError(f"Unknown timezone {name!r}", details={"timezone": name}) from exc
 
 

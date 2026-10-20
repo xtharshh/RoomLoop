@@ -12,6 +12,7 @@ from datetime import date
 
 from .db import Database
 from .demo import reset_to_demo_state
+from .domain import TZ_DATA_HINT, timezone_database_available
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -20,6 +21,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--reset", action="store_true", help="Delete existing bookings first")
     parser.add_argument("--today", help="Anchor date for relative demo data (YYYY-MM-DD)")
     args = parser.parse_args(argv)
+
+    if not timezone_database_available():
+        print(f"Cannot seed demo data. {TZ_DATA_HINT}", file=sys.stderr)
+        return 2
 
     anchor = date.fromisoformat(args.today) if args.today else None
     db = Database(args.db)

@@ -12,6 +12,7 @@
 8. **PM questions I would ask first** → cancel-from-now vs cancel-from-occurrence; which timezone the nightly report renders; whether the `3, 4, 9, 17` gaps are real; weekly-only vs biweekly; who is notified when a week is skipped.
 9. **AI helped most with scaffolding and test matrices; it was wrong about contracts** → it returned UTC as the legacy format, used implicit transactions (nested `BEGIN` crash), reported an impossible 02:30 that it had actually stored as 03:30, and reused one error code for unrelated failures. Each is now pinned by a test.
 10. **Deliberately left out** → auth, notifications, series editing, Postgres exclusion constraints, pagination. Next, in order: SSO identity, "this and future" edits, Postgres with a range exclusion constraint.
+11. **Portability is a correctness issue, not a chore** → `zoneinfo` silently depends on the host's IANA database; Windows has none. It is now a pinned dependency, a distinct error code, and a `/health` field, because "works on my machine" for a timezone-heavy service means the code is wrong somewhere.
 
 ---
 
@@ -165,6 +166,14 @@ one is now covered by a test:
    `SERIES_FULLY_CONFLICTED`.
 5. **Trusted the sample ids** `3, 4, 9, 17` as the room table while also
    implementing R5's `1..N` iteration. Caught by writing the availability test.
+6. **Assumed the IANA timezone database always exists.** It does on Linux, not on
+   Windows. The first user to run this on Windows got HTTP 422
+   `Unknown timezone 'Europe/Berlin'` on `/availability`, because a missing OS
+   package was being reported as a bad request. Fixed three ways: `tzdata` is now
+   a dependency, a missing database is its own error (`TZ_DATA_MISSING`, 500, with
+   the install command in the message), and `/health` reports
+   `timezone_data: ok|missing` so the problem is visible before any booking
+   fails. `tests/test_environment.py` reproduces a database-less host.
 
 The pattern: AI was reliable for structure and unreliable about *contracts* —
 timestamp meaning, transaction boundaries, error taxonomy. Those are the parts I

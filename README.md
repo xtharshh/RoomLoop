@@ -4,21 +4,43 @@ The booking core for our internal meeting-room service: single bookings, weekly
 recurring bookings, cancellation, and availability — with an animated console
 you can actually click through.
 
-**Python 3.11+ · FastAPI · SQLite · no build step for the UI · 84 tests**
+**Python 3.11+ · FastAPI · SQLite · no build step for the UI · 92 tests**
+
+**macOS / Linux**
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt     # requirements.txt alone is enough to run it
 python -m roomloop.seed --reset          # demo data (optional but recommended)
-uvicorn roomloop.api:app --reload
+python -m uvicorn roomloop.api:app --reload
 ```
+
+**Windows (PowerShell)**
+
+```powershell
+python -m venv .venv
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass   # only for this window
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements-dev.txt
+python -m roomloop.seed --reset
+python -m uvicorn roomloop.api:app --reload
+```
+
+Or, on either platform, one command that does all of the above and checks the
+timezone database first: `./scripts/dev.sh` · `.\scripts\dev.ps1`
+
+> **Windows note — use `python -m uvicorn`, not `uvicorn`.** The console script
+> lives in `.venv\Scripts\`, so it is only on `PATH` while the venv is active.
+> Same for `pytest` → `python -m pytest`, and `curl` in PowerShell is an alias
+> for `Invoke-WebRequest`, so use `curl.exe` for the examples below.
 
 Then open **http://localhost:8000/console** for the console and
 **http://localhost:8000/docs** for the generated OpenAPI docs.
 
 ```bash
-pytest -q                                # 84 tests, ~2s
-pytest -q tests/test_scenarios.py -v     # the data-driven edge cases
+python -m pytest -q                          # 92 tests, ~2s
+python -m pytest -q tests/test_scenarios.py -v   # the data-driven edge cases
+python -m pytest -q tests/test_environment.py -v # timezone data / portability
 ```
 
 ---
@@ -132,6 +154,26 @@ first instant; non-existent spring-forward times shift forward with a
 **Cancelling must free the room.** Cancellation marks rows, and every conflict
 query filters `cancelled_at IS NULL`, so a cancelled series can be re-booked
 immediately. Past instances stay `confirmed` — that is what reporting expects.
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `uvicorn : The term 'uvicorn' is not recognized` | The venv is not active, so `.venv\Scripts` is not on `PATH` | Activate it, or always use `python -m uvicorn …` |
+| `Unknown timezone 'Europe/Berlin'`, `/availability` returns 422/500, every booking fails | No IANA timezone database (normal on Windows, common in slim containers) | `python -m pip install tzdata` — it is now in `requirements.txt`, so a fresh install is enough |
+| `/health` says `"status": "degraded"`, `"timezone_data": "missing"` | Same as above | Install `tzdata`; `/health` tells you explicitly |
+| `No module named roomloop` | Command run outside the repo root | `cd` to the folder containing `roomloop\` |
+| `Set-ExecutionPolicy ... cannot be loaded` | PowerShell blocks unsigned scripts | `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` |
+
+`/health` is the quickest check:
+
+```bash
+curl.exe -s localhost:8000/health
+# {"status":"ok","service":"roomloop","rooms":5,"database":"file","timezone_data":"ok"}
+```
+
+If `timezone_data` is `missing`, nothing else matters until it is fixed — every
+wall-clock calculation depends on it.
 
 ## Test data
 
