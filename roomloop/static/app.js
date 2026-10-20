@@ -16,7 +16,7 @@ const state = {
   day: todayISO(),
   dayCache: new Map(),
   series: [],
-  audit: [],
+  summary: null,
   view: 'calendar',
   api: { index: 0, lastResponse: '' },
 };
@@ -93,17 +93,6 @@ function qs(params) {
   return `?${search.toString()}`;
 }
 
-function initials(name) {
-  const clean = String(name || '?').split('@')[0].replace(/[._-]/g, ' ');
-  return clean.split(' ').filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('');
-}
-
-function toneFor(text) {
-  let hash = 0;
-  for (const ch of String(text)) hash = (hash * 31 + ch.charCodeAt(0)) % 997;
-  return hash % 5;
-}
-
 const TONES = ['#67e8f9', '#a78bfa', '#4ade80', '#fbbf24', '#f472b6'];
 
 function tzOffsetMinutes(tz, when = new Date()) {
@@ -170,7 +159,7 @@ async function api(path, { method = 'GET', body, headers = {} } = {}) {
 function toast(title, message = '', kind = 'info', ttl = 4200) {
   const node = document.createElement('div');
   node.className = `toast ${kind}`;
-  node.innerHTML = `<span class="t-ico"></span><div><strong>${esc(title)}</strong>${
+  node.innerHTML = `<span class="dot"></span><div><strong>${esc(title)}</strong>${
     message ? `<span>${esc(message)}</span>` : ''}</div>`;
   $('#toasts').append(node);
   setTimeout(() => {
@@ -194,14 +183,7 @@ function tickClocks() {
       timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false,
     }).format(new Date());
     $('[data-clock]', clock).textContent = time;
-    $('[data-offset]', clock).textContent = `UTC${offsetLabel(tz)}`;
   });
-  const pulse = $('#stat-free-sub');
-  if (pulse && pulse.dataset.live) {
-    const tz = 'Europe/Berlin';
-    const { hour, minute } = nowInOffice(tz);
-    pulse.textContent = `Berlin ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} · live`;
-  }
 }
 
 /* ------------------------------------------------------------------ views */
@@ -238,15 +220,7 @@ async function loadSeries() {
   const payload = await api('/series');
   state.series = payload.series;
   renderSeries();
-  updateStatsFromSeries();
-}
-
-async function loadAudit() {
-  try {
-    const payload = await api('/audit?limit=8');
-    state.audit = payload.entries;
-    renderActivity();
-  } catch { /* non-critical */ }
+  renderDaySummary();
 }
 
 /* ============================================================ week strip */
@@ -259,14 +233,12 @@ function renderWeekstrip() {
     const btn = document.createElement('button');
     btn.className = 'day-btn';
     btn.dataset.day = iso;
-    btn.style.animationDelay = `${i * 26}ms`;
     if (iso === todayISO()) btn.classList.add('is-today');
     if (iso === state.day) btn.classList.add('is-active');
     btn.innerHTML = `
       <span class="dow">${weekdayShort(iso)}</span>
       <span class="dnum">${dayNum(iso)}</span>
-      <span class="dmonth">${monthShort(iso)}</span>
-      <span class="dots" data-dots></span>`;
+      <span class="dot"></span>`;
     btn.addEventListener('click', () => selectDay(iso));
     strip.append(btn);
   }
@@ -282,10 +254,9 @@ async function paintWeekDensity() {
       const count = payload.rooms
         .filter((room) => state.office === 'all' || room.office === state.office)
         .reduce((sum, room) => sum + room.busy.length, 0);
-      const dots = $(`.day-btn[data-day="${iso}"] [data-dots]`);
-      if (!dots) return;
-      dots.innerHTML = Array.from({ length: Math.min(4, count) }, () => '<i></i>').join('');
-    } catch { /* ignore */ }
+      const button = $(`.day-btn[data-day="${iso}"]`);
+      if (button) button.classList.toggle('has-bookings', count > 0);
+    } catch { /* a missing day should not break the strip */ }
   }));
 }
 
@@ -299,26 +270,23 @@ function selectDay(iso) {
 function renderRoomList() {
   const list = $('#room-list');
   list.innerHTML = '';
-  const rooms = visibleRooms();
-  rooms.forEach((room) => {
+  visibleRooms().forEach((room) => {
     const now = nowInOffice(room.timezone);
     const minutes = now.hour * 60 + now.minute;
     const cached = state.dayCache.get(todayISO());
-    let busy = false;
-    if (cached) {
+    let stateClass = 'unknown';
+    if (cached && officeDate(room.timezone) === todayISO()) {
       const entry = cached.rooms.find((item) => item.room_id === room.id);
-      if (entry && officeDate(room.timezone) === todayISO()) {
-        busy = entry.busy.some((b) => minutesOf(b.start) <= minutes && minutesOf(b.end) > minutes);
+      if (entry) {
+        const busy = entry.busy.some((b) => minutesOf(b.start) <= minutes && minutesOf(b.end) > minutes);
+        stateClass = busy ? 'busy' : '';
       }
     }
     const li = document.createElement('li');
     li.innerHTML = `
-      <span class="room-badge">${room.id}</span>
-      <span class="room-meta">
-        <span class="room-name">${esc(room.name)}</span>
-        <span class="room-sub">${esc(room.office)} · ${room.capacity} seats · ${offsetLabel(room.timezone)}</span>
-      </span>
-      <span class="free-dot ${busy ? 'busy' : ''}" title="${busy ? 'Busy now' : 'Free now'}"></span>`;
+      <span class="room-dot ${stateClass}" title="${stateClass === 'busy' ? 'Busy now' : 'Free now'}"></span>
+      <span class="room-name">${esc(room.name)}</span>
+      <span class="room-meta">${room.capacity}</span>`;
     li.addEventListener('click', () => openNewBooking({ room_id: room.id }));
     list.append(li);
   });
@@ -334,43 +302,40 @@ function renderOfficeChips() {
 async function renderCalendar() {
   $('#day-label').textContent = longDate(state.day);
   const timeline = $('#timeline');
-  if (!state.rooms.length) {
-    timeline.innerHTML = '<div class="timeline-skeleton"><div class="sk-row"></div><div class="sk-row"></div><div class="sk-row"></div></div>';
-  }
 
   let payload;
   try {
     payload = await loadDay(state.day);
   } catch (error) {
-    timeline.innerHTML = `<div class="tl-empty">Could not load ${esc(state.day)}: ${esc(error.message)}</div>`;
+    timeline.innerHTML = `<p class="tl-error">Could not load this day — ${esc(error.message)}</p>`;
+    $('#day-summary').textContent = 'Unavailable';
     return;
   }
 
   const rooms = payload.rooms.filter((room) => state.office === 'all' || room.office === state.office);
   const offices = [...new Set(rooms.map((room) => room.office))];
-  const now = new Date();
+  const span = DAY_END - DAY_START;
 
-  const parts = [];
-  parts.push(`<div class="timeline-inner">`);
-  parts.push(`<div class="tl-hours"><span></span>${Array.from({ length: 11 }, (_, i) => {
-    const hour = 8 + i;
-    return `<span>${String(hour).padStart(2, '0')}:00</span>`;
-  }).join('')}</div>`);
+  const parts = ['<div class="tl-inner">'];
+  parts.push(`<div class="tl-scale"><div></div><div class="tl-scale-hours">${
+    Array.from({ length: 11 }, (_, i) => `<span>${String(8 + i).padStart(2, '0')}:00</span>`).join('')
+  }</div></div>`);
 
   offices.forEach((office) => {
     const officeRooms = rooms.filter((room) => room.office === office);
-    const sample = state.rooms.find((room) => room.office === office);
-    const tz = sample?.timezone || 'UTC';
+    const tz = state.rooms.find((room) => room.office === office)?.timezone || 'UTC';
     const { hour, minute } = nowInOffice(tz);
+    const nowMin = hour * 60 + minute;
+    const isToday = officeDate(tz) === state.day;
+    const showNow = isToday && nowMin >= DAY_START && nowMin <= DAY_END;
+
     parts.push(`
-      <div class="office-divider">
-        <span>${esc(office)}</span>
-        <span class="flag">${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} local · UTC${offsetLabel(tz)}</span>
+      <div class="office-row">
+        ${esc(office)}
+        <span class="office-time">${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} local · UTC${offsetLabel(tz)}</span>
       </div>`);
 
-    officeRooms.forEach((room, index) => {
-      const span = DAY_END - DAY_START;
-      const lanes = [];
+    officeRooms.forEach((room) => {
       const items = room.busy
         .map((busy) => ({
           ...busy,
@@ -380,6 +345,8 @@ async function renderCalendar() {
         .filter((busy) => busy.endMin > busy.startMin)
         .sort((a, b) => a.startMin - b.startMin || b.endMin - a.endMin);
 
+      // Stack overlapping bookings instead of letting them collide.
+      const lanes = [];
       items.forEach((item) => {
         let lane = 0;
         while (lanes[lane] !== undefined && lanes[lane] > item.startMin) lane += 1;
@@ -387,42 +354,29 @@ async function renderCalendar() {
         item.lane = lane;
       });
 
-      const laneCount = Math.max(1, lanes.length);
-      const rowHeight = Math.max(62, laneCount * 54 + 8);
-      const nowMin = hour * 60 + minute;
-      const showNow = officeDate(tz) === state.day && nowMin >= DAY_START && nowMin <= DAY_END;
-
+      const rowHeight = Math.max(46, lanes.length * 40 + 12);
       const pills = items.map((item) => {
-        const width = Math.max(1.4, ((item.endMin - item.startMin) / span) * 100);
         const left = ((item.startMin - DAY_START) / span) * 100;
-        const tone = toneFor(item.user);
-        const series = item.series_id ? 'is-series' : '';
-        const label = item.user.split('@')[0];
-        const compact = item.endMin - item.startMin < 45;
-        return `<button class="tl-pill ${series} tone-${tone}"
-            style="left:${left}%;width:${width}%;top:${8 + item.lane * 54}px;height:46px;animation-delay:${index * 30 + item.lane * 40}ms"
-            data-booking="${item.id}" title="${esc(item.user)} · ${hhmm(item.start)}–${hhmm(item.end)}${item.series_id ? ' · recurring' : ''}">
-            <span class="p-title">${esc(compact ? label.slice(0, 8) : label)}</span>
-            <span class="p-time">${hhmm(item.start)}–${hhmm(item.end)}${item.series_id ? ' ↻' : ''}</span>
+        const width = Math.max(2, ((item.endMin - item.startMin) / span) * 100);
+        const who = item.user.split('@')[0];
+        return `<button class="booking ${item.series_id ? 'series' : ''}"
+            style="left:${left}%;width:${width}%;top:${6 + item.lane * 40}px;height:32px"
+            data-booking="${item.id}"
+            title="${esc(item.user)} · ${hhmm(item.start)}–${hhmm(item.end)}${item.series_id ? ' · recurring' : ''}">
+            <span class="b-who">${esc(who)}</span>
+            <span class="b-time">${hhmm(item.start)}–${hhmm(item.end)}</span>
           </button>`;
       }).join('');
 
-      const empty = items.length === 0
-        ? `<span class="tl-empty">free all day</span>`
-        : '';
-
       parts.push(`
-        <div class="tl-row" style="animation-delay:${index * 45}ms">
+        <div class="tl-row">
           <div class="tl-label" data-room="${room.room_id}" title="Book ${esc(room.name)}">
-            <span class="room-badge">${room.room_id}</span>
-            <span class="room-meta">
-              <span class="room-name">${esc(room.name)}</span>
-              <span class="room-sub">${room.capacity} seats · ${retainedPercent(room)}% used</span>
-            </span>
+            <span class="tl-room">${esc(room.name)}</span>
+            <span class="tl-room-meta">${room.capacity} seats</span>
           </div>
           <div class="tl-track" style="height:${rowHeight}px">
+            ${items.length ? '' : '<span class="tl-free">Free</span>'}
             ${pills}
-            ${empty}
             ${showNow ? `<span class="now-line" style="left:${((nowMin - DAY_START) / span) * 100}%"></span>` : ''}
           </div>
         </div>`);
@@ -431,7 +385,7 @@ async function renderCalendar() {
   parts.push('</div>');
   timeline.innerHTML = parts.join('');
 
-  $$('.tl-pill').forEach((pill) => {
+  $$('.booking').forEach((pill) => {
     pill.addEventListener('click', () => openBookingDetail(Number(pill.dataset.booking)));
   });
   $$('.tl-label').forEach((label) => {
@@ -440,130 +394,80 @@ async function renderCalendar() {
 
   const totalBusy = rooms.reduce((sum, room) => sum + room.busy.length, 0);
   const totalUtil = rooms.reduce((sum, room) => sum + room.utilised_minutes, 0);
-  const capacity = rooms.length * (DAY_END - DAY_START);
-  updateStats({ rooms, totalBusy, totalUtil, capacity });
-  $('#tz-note').textContent = `${rooms.length} rooms · office hours 08:00–19:00 · ${now.toTimeString().slice(0, 8)} browser time`;
+  const freeNow = rooms.filter((room) => {
+    const tz = room.timezone;
+    if (officeDate(tz) !== todayISO()) return false;
+    const now = nowInOffice(tz);
+    const minutes = now.hour * 60 + now.minute;
+    if (minutes < DAY_START || minutes > DAY_END) return false;
+    return !room.busy.some((b) => minutesOf(b.start) <= minutes && minutesOf(b.end) > minutes);
+  }).length;
+  state.summary = { rooms: rooms.length, totalBusy, totalUtil, freeNow, capacity: rooms.length * span };
+  renderDaySummary();
+  $('#tz-note').textContent = 'Wall clock · 08:00–19:00';
   renderRoomList();
 }
 
-function retainedPercent(room) {
-  const span = DAY_END - DAY_START;
-  return Math.round((room.utilised_minutes / span) * 100);
-}
+function renderDaySummary() {
+  const summary = state.summary;
+  const target = $('#day-summary');
+  if (!summary) return;
 
-function updateStats({ rooms, totalBusy, totalUtil, capacity }) {
-  const nowMinutesByRoom = rooms.map((room) => {
-    const now = nowInOffice(room.timezone);
-    return {
-      room,
-      minutes: now.hour * 60 + now.minute,
-      today: officeDate(room.timezone) === todayISO(),
-    };
-  });
-  const freeNow = rooms.filter((room) => {
-    const info = nowMinutesByRoom.find((i) => i.room.room_id === room.room_id);
-    if (!info || !info.today) return false;
-    if (info.minutes < DAY_START || info.minutes > DAY_END) return false;
-    return !room.busy.some((b) => minutesOf(b.start) <= info.minutes && minutesOf(b.end) > info.minutes);
-  }).length;
-
-  const sub = $('#stat-free-sub');
+  const parts = [];
   if (state.day === todayISO()) {
-    countTo($('#stat-free'), freeNow);
-    sub.dataset.live = '1';
+    parts.push(`${summary.freeNow} of ${summary.rooms} rooms free now`);
   } else {
-    $('#stat-free').textContent = '—';
-    sub.dataset.live = '';
-    sub.textContent = 'shown for today';
+    parts.push(`${summary.rooms} rooms`);
   }
-  countTo($('#stat-booked'), totalBusy);
-  countTo($('#stat-util'), capacity ? Math.round((totalUtil / capacity) * 100) : 0, '%');
-}
-
-function countTo(node, value, suffix = '') {
-  if (!node) return;
-  const start = Number(node.dataset.value || 0);
-  const end = Number(value) || 0;
-  if (start === end) { node.textContent = `${end}${suffix}`; return; }
-  const t0 = performance.now();
-  const duration = 520;
-  const tick = (t) => {
-    const p = Math.min(1, (t - t0) / duration);
-    const eased = 1 - Math.pow(1 - p, 3);
-    node.textContent = `${Math.round(start + (end - start) * eased)}${suffix}`;
-    if (p < 1) requestAnimationFrame(tick);
-    else node.dataset.value = String(end);
-  };
-  node.dataset.value = String(start);
-  requestAnimationFrame(tick);
-}
-
-function updateStatsFromSeries() {
-  countTo($('#stat-series'), state.series.length);
-  const instances = state.series.reduce((sum, s) => sum + s.total_instances, 0);
-  const cancelled = state.series.reduce((sum, s) => sum + s.cancelled_instances, 0);
-  $('#stat-series-sub').textContent = `${instances} instances · ${cancelled} cancelled`;
-}
-
-/* ============================================================ activity */
-function renderActivity() {
-  const list = $('#activity-list');
-  if (!state.audit.length) {
-    list.innerHTML = '<li class="muted small">No events yet</li>';
-    return;
+  parts.push(`${summary.totalBusy} ${summary.totalBusy === 1 ? 'booking' : 'bookings'}`);
+  if (summary.capacity) {
+    const used = Math.round((summary.totalUtil / summary.capacity) * 100);
+    parts.push(`${used}% of office hours booked`);
   }
-  const labels = {
-    'booking.created': (e) => `Booked room ${e.payload?.room_id ?? '?'} · ${esc(e.payload?.user || '')}`,
-    'series.created': (e) => `Series #${e.series_id} · ${e.payload?.created ?? '?'} created, ${e.payload?.skipped ?? 0} skipped`,
-    'booking.cancelled': () => 'Cancelled a single booking',
-    'series.cancelled': (e) => `Cancelled series #${e.series_id} · ${e.payload?.cancelled_count ?? 0} instances`,
-  };
-  list.innerHTML = state.audit.slice(0, 5).map((entry, index) => {
-    const fn = labels[entry.action] || (() => entry.action);
-    const time = (entry.at || '').slice(11, 16);
-    return `<li style="animation-delay:${index * 40}ms">${fn(entry)} <time>${time}Z</time></li>`;
-  }).join('');
+  if (state.series.length) {
+    parts.push(`${state.series.length} recurring ${state.series.length === 1 ? 'series' : 'series'}`);
+  }
+  target.textContent = parts.join(' · ');
 }
 
 /* ============================================================ series view */
 function renderSeries() {
   const grid = $('#series-grid');
   if (!state.series.length) {
-    grid.innerHTML = `<div class="notice notice-soft">No recurring series yet. Create one from
-      <b>New series</b> — the calendar and this page update together.</div>`;
+    grid.innerHTML = `<p class="empty-state">No recurring bookings yet.
+      Create one with “New recurring booking”.</p>`;
     return;
   }
-  grid.innerHTML = state.series.map((s, index) => {
+
+  grid.innerHTML = state.series.map((s) => {
     const remaining = s.total_instances - s.cancelled_instances;
     const percent = s.total_instances ? (remaining / s.total_instances) * 100 : 0;
-    const room = state.rooms.find((r) => r.id === s.room_id);
-    const tone = `tone-${toneFor(s.user)}`;
+    const weekday = new Intl.DateTimeFormat('en-GB', { weekday: 'long' })
+      .format(parseISO(s.local_start.slice(0, 10)));
+    const active = remaining > 0;
     return `
-      <article class="series-card" data-series="${s.series_id}" style="animation-delay:${index * 55}ms">
-        <div class="sc-top">
+      <button class="series-card" data-series="${s.series_id}">
+        <div class="series-top">
           <div>
-            <div class="sc-title">${esc(s.user.split('@')[0])} <span class="muted small">· weekly</span></div>
-            <div class="sc-sub">${esc(s.room_name)} · ${esc(s.office)} · #${s.series_id}</div>
+            <div class="series-who">${esc(s.user.split('@')[0])}</div>
+            <div class="series-room">${esc(s.room_name)} · ${esc(s.office)}</div>
           </div>
-          <span class="badge ${remaining > 0 ? 'badge-info' : 'badge-muted'}">${remaining > 0 ? 'active' : 'fully cancelled'}</span>
+          <span class="status ${active ? 'live' : 'ended'}">${active ? 'Active' : 'Ended'}</span>
         </div>
-        <div class="sc-when">
-          <svg viewBox="0 0 24 24" class="ico" style="width:14px;height:14px;opacity:.7"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 8v4.5l3 1.8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-          ${hhmm(s.local_start)}–${hhmm(s.local_end)} · ${new Intl.DateTimeFormat('en-GB', { weekday: 'long' }).format(parseISO(s.local_start.slice(0, 10)))}
-          <span class="badge badge-muted">until ${esc(s.repeat_until)}</span>
+
+        <div class="series-when">
+          <b>${weekday} ${hhmm(s.local_start)}–${hhmm(s.local_end)}</b>
+          <span class="muted">until ${esc(s.repeat_until)}</span>
         </div>
-        <div class="inst-strip">
-          ${Array.from({ length: Math.min(s.total_instances, 18) }, (_, i) => (
-            `<span class="inst ${i >= remaining ? 'cancelled' : tone}" title="instance ${i + 1}"></span>`
-          )).join('')}
-          ${s.total_instances > 18 ? `<span class="badge badge-muted">+${s.total_instances - 18}</span>` : ''}
+
+        <div class="series-progress">
+          <div class="series-bar"><span style="width:${percent}%"></span></div>
+          <div class="series-meta">
+            <span>${remaining} of ${s.total_instances} instances remaining</span>
+            <span>#${s.series_id}</span>
+          </div>
         </div>
-        <div class="sc-foot">
-          <div class="sc-progress"><span style="width:${percent}%"></span></div>
-          <span class="small muted">${remaining}/${s.total_instances} live</span>
-          <span class="badge ${s.office === 'Berlin' ? 'badge-info' : 'badge-warn'}">${esc(s.office)}</span>
-        </div>
-      </article>`;
+      </button>`;
   }).join('');
 
   $$('.series-card').forEach((card) => {
@@ -897,9 +801,9 @@ async function openBookingDetail(id) {
         <span class="badge badge-muted">${esc(booking.user)}</span>
       </div>
       <dl class="kv">
-        <div class="kv-row"><dt>Local wall clock</dt><dd>${esc(booking.start)} → ${esc(booking.end)}</dd></div>
+        <div class="kv-row"><dt>Local wall clock</dt><dd>${esc(booking.start.replace('T', ' '))} → ${esc(booking.end.slice(11))}</dd></div>
         <div class="kv-row"><dt>Office timezone</dt><dd>${esc(tz)} · UTC${esc(booking.utc_offset || offsetLabel(tz))}</dd></div>
-        <div class="kv-row"><dt>Exact instant</dt><dd>${esc(booking.start_utc || '')} → ${esc(booking.end_utc || '')}</dd></div>
+        <div class="kv-row"><dt>Exact instant</dt><dd>${esc(booking.start_utc || '')} → ${esc((booking.end_utc || '').slice(11))}</dd></div>
         <div class="kv-row"><dt>Duration</dt><dd>${fmtDuration(Math.round((new Date(booking.end_utc) - new Date(booking.start_utc)) / 60000))}</dd></div>
       </dl>
       ${isSeries ? `<div class="notice notice-soft small">Cancelling the series removes this and every future occurrence. Past instances stay in the calendar and in reporting.</div>` : ''}
@@ -1074,7 +978,7 @@ function renderApiList() {
   $('#api-list').innerHTML = endpoints.map((endpoint, index) => `
     <button data-index="${index}" class="${index === state.api.index ? 'is-active' : ''}">
       <span class="verb ${endpoint.verb.toLowerCase()}">${endpoint.verb}</span>
-      <span class="p">${esc(endpoint.path)}</span>
+      <span class="ep">${esc(endpoint.path)}</span>
     </button>`).join('');
   $$('#api-list button').forEach((btn) => btn.addEventListener('click', () => selectEndpoint(Number(btn.dataset.index))));
   selectEndpoint(state.api.index);
@@ -1213,9 +1117,9 @@ const NEXT = [
 ];
 
 function renderDesign() {
-  const card = (item, index) => `
-    <article class="note-card" style="animation-delay:${index * 40}ms">
-      <h3><span class="note-tag">${esc(item.tag)}</span>${esc(item.title)}</h3>
+  const card = (item) => `
+    <article class="note">
+      <h3><span class="tag">${esc(item.tag)}</span>${esc(item.title)}</h3>
       <p>${esc(item.body)}</p>
     </article>`;
 
@@ -1231,7 +1135,7 @@ async function refreshAll() {
   state.dayCache.clear();
   try {
     await loadRooms();
-    await Promise.all([loadSeries(), loadAudit(), renderCalendar(), loadDay(todayISO())]);
+    await Promise.all([loadSeries(), renderCalendar(), loadDay(todayISO())]);
     renderWeekstrip();
     renderRoomList();
   } catch (error) {
@@ -1298,7 +1202,7 @@ async function bootstrap() {
   }
 
   try {
-    await Promise.all([loadRooms(), loadSeries(), loadAudit()]);
+    await Promise.all([loadRooms(), loadSeries()]);
     renderWeekstrip();
     await renderCalendar();
     renderApiList();
@@ -1306,11 +1210,7 @@ async function bootstrap() {
     toast('Could not load data', error.message, 'bad');
   }
 
-  setTimeout(() => {
-    const pill = $('#stat-free-sub');
-    if (pill) pill.dataset.live = state.day === todayISO() ? '1' : '';
-    tickClocks();
-  }, 400);
+  setInterval(tickClocks, 60000);
 }
 
 bootstrap();

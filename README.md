@@ -114,11 +114,15 @@ there is a `scope=single` hatch for one week.
 
 | Area | What it shows |
 | --- | --- |
-| **Calendar** | Rooms as rows, office hours as columns, one day at a time. Series instances carry `↻`, a live "now" line, and a week strip showing booking density per day. |
-| **Booking drawer** | Wall-clock entry with a live preview of *local → stored → exact UTC instant*, duration chips, one-off or weekly, and a `skip` / `all-or-nothing` switch. Results report created vs skipped per occurrence. |
-| **Recurring series** | Instance strip, live/cancelled counts, and a drawer listing every instance with its UTC offset — the DST shift made visible. Cancel the whole future in one action. |
+| **Calendar** | One day per view: rooms as rows, office hours as columns. A dot under a date means that day has bookings, a thin red line marks now, and a one-line summary above the grid states how many rooms are free, how many bookings there are, and how much of the day is used. |
+| **Booking drawer** | Wall-clock entry with a live preview of *local → stored → exact UTC instant*, duration chips, one-off or weekly, and a `skip` / `all-or-nothing` switch. Rejections name the blocking booking. |
+| **Recurring** | One card per series: weekday and time, end date, and how many instances remain. Opening a card lists every instance with its UTC offset — the DST shift made visible. Cancel the whole future in one action. |
 | **API explorer** | Ten curated calls fired at the running server, with status, latency and highlighted JSON. |
-| **Design notes** | R1–R5 and C1–C2 rendered as cards, for whoever opens the app without reading the repo. |
+| **Notes** | R1–R5 and C1–C2 as short cards, for whoever opens the app without reading the repo. |
+
+The interface is deliberately plain: one accent colour, two type sizes, and colour
+reserved for a single distinction — one-off bookings are neutral, recurring ones are
+accented. The dense version was harder to read than the API it wrapped.
 
 ```bash
 python -m uvicorn roomloop.api:app --reload
