@@ -6,7 +6,7 @@ Take-home for Junior Software Development Engineer, Round 2.
 | --- | --- |
 | **Repository** | https://github.com/xtharshh/RoomLoop |
 | **Language / stack** | Python 3.11+, FastAPI, SQLite (`sqlite3` + `zoneinfo` from stdlib), zero-build UI |
-| **Tests** | 92, `python -m pytest -q` (~2s) |
+| **Tests** | 95, `python -m pytest -q` (~2s) |
 | **Runtime dependencies** | 2 (`fastapi`, `uvicorn`) plus `tzdata` for Windows |
 
 ## Where the three deliverables are
@@ -33,7 +33,7 @@ Take-home for Junior Software Development Engineer, Round 2.
 ```bash
 python -m venv .venv && source .venv/bin/activate    # Windows: .\.venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt
-pytest -q                                            # 92 passed
+pytest -q                                            # 95 passed
 ```
 
 Then, optionally:
