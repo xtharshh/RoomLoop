@@ -44,6 +44,7 @@ Every error — including framework validation failures — uses one envelope:
 | `SERIES_CONFLICT_FAIL_FAST` | 409 | `conflict_policy=fail` hit a clash; nothing was written. |
 | `SERIES_FULLY_CONFLICTED` | 409 | Every occurrence clashes; nothing was written. |
 | `IDEMPOTENCY_KEY_REUSED` | 409 | Same `Idempotency-Key`, different body. |
+| `TZ_DATA_MISSING` | 500 | The host has no IANA timezone database (normal on Windows). Environment problem, not a bad request — install `tzdata`. |
 
 Conflict responses carry `X-RoomLoop-Retryable: false` — retrying the same
 request will fail identically.
@@ -218,7 +219,7 @@ This is what the console renders.
 
 | Endpoint | Notes |
 | --- | --- |
-| `GET /health` | `{"status":"ok","rooms":5,"database":"file"}` |
+| `GET /health` | `{"status":"ok","rooms":5,"database":"file","timezone_data":"ok"}`. Returns `status: degraded` and `timezone_data: missing` when the host has no IANA tz database. |
 | `GET /meta` | Policy constants: caps, working hours, policies, timestamp contract, offices. |
 | `GET /audit?limit=20` | Recent `booking.created`, `series.created`, `booking.cancelled`, `series.cancelled` events. |
 | `POST /admin/reset-demo` | Wipes bookings and re-seeds the demo set. 422 when `ROOMLOOP_DEMO=0`. |

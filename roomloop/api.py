@@ -14,6 +14,7 @@ Design notes that matter for reviewers:
 
 from __future__ import annotations
 
+import logging
 import os
 from datetime import date
 from pathlib import Path
@@ -29,9 +30,11 @@ from pydantic import BaseModel, Field
 from .db import Database
 from .domain import (
     MAX_SERIES_OCCURRENCES,
+    TZ_DATA_HINT,
     RoomLoopError,
     SeriesConflictFailFast,
     ValidationError,
+    timezone_database_available,
 )
 from .service import BookingService
 
@@ -129,6 +132,13 @@ def create_app(db_path: str | None = None) -> FastAPI:
     app.state.db = db
     app.state.service = service
 
+    if not timezone_database_available():
+        # Fail loudly at boot rather than with a confusing 422 on the first
+        # availability request. Windows and slim containers hit this.
+        logging.getLogger("roomloop").warning(
+            "NO IANA TIMEZONE DATABASE ON THIS HOST — %s", TZ_DATA_HINT
+        )
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -183,11 +193,14 @@ def create_app(db_path: str | None = None) -> FastAPI:
     # -- ops ---------------------------------------------------------------
     @app.get("/health", tags=["ops"], summary="Liveness probe")
     async def health() -> dict[str, Any]:
+        tz_ok = timezone_database_available()
         return {
-            "status": "ok",
+            "status": "ok" if tz_ok else "degraded",
             "service": "roomloop",
             "rooms": db.room_count(),
             "database": "memory" if resolved_path == ":memory:" else "file",
+            "timezone_data": "ok" if tz_ok else "missing",
+            **({} if tz_ok else {"hint": TZ_DATA_HINT}),
         }
 
     @app.get("/meta", tags=["ops"], summary="Policy constants the clients need")
@@ -204,6 +217,9 @@ def create_app(db_path: str | None = None) -> FastAPI:
                 "additive_fields": ["start_utc", "end_utc", "utc_offset", "timezone"],
             },
             "offices": ["Berlin", "Denver"],
+            "environment": {
+                "timezone_data": "ok" if timezone_database_available() else "missing",
+            },
         }
 
     @app.get("/audit", tags=["ops"], summary="Recent activity trail")

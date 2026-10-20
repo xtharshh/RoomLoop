@@ -1,2 +1,6 @@
 fastapi>=0.110,<1.0
 uvicorn[standard]>=0.27,<1.0
+# zoneinfo reads the IANA tz database from the OS. Windows has none, and some
+# slim container images strip it, so ship the data ourselves. Small, and it
+# removes a whole class of "Unknown timezone" failures.
+tzdata>=2024.1
