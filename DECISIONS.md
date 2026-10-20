@@ -1,5 +1,22 @@
 # Decisions
 
+## TL;DR — the short version
+
+1. **R1 vs R2 conflict** → both are implemented; `conflict_policy: "skip"` is the default (R2), `"fail"` gives strict all-or-nothing (R1). A series where every occurrence clashes always fails; an empty series is never saved.
+2. **Timestamps** → stored as UTC epoch seconds, rendered back to the exact naive local ISO the reporting job expects (C1). The legacy string means *wall clock at the room's office*.
+3. **Weekly repeats the wall clock, not the elapsed time** → expanded on naive datetimes, resolved per occurrence in the office timezone. Berlin and Denver each cross DST on their own date.
+4. **DST edges are decided, not inherited** → non-existent spring-forward times shift forward with a `DST_GAP_SHIFTED` warning; ambiguous fall-back times use the first instant.
+5. **`GET /rooms` did not gain a single field** (C2) → richer data is `?detail=true`. Room ids are sequential `1..5` because R5 iterates `1..N`, even though the sample showed `3, 4, 9, 17`.
+6. **Cancelling a series is soft and immediate** → future instances marked cancelled, past kept for reporting, every conflict query ignores cancelled rows so the room frees at once. Idempotent, with a `scope=single` exception hatch.
+7. **Racing writers are safe by construction** → conflict check plus inserts inside one `BEGIN IMMEDIATE`; proven by racing eight requests at one slot.
+8. **PM questions I would ask first** → cancel-from-now vs cancel-from-occurrence; which timezone the nightly report renders; whether the `3, 4, 9, 17` gaps are real; weekly-only vs biweekly; who is notified when a week is skipped.
+9. **AI helped most with scaffolding and test matrices; it was wrong about contracts** → it returned UTC as the legacy format, used implicit transactions (nested `BEGIN` crash), reported an impossible 02:30 that it had actually stored as 03:30, and reused one error code for unrelated failures. Each is now pinned by a test.
+10. **Deliberately left out** → auth, notifications, series editing, Postgres exclusion constraints, pagination. Next, in order: SSO identity, "this and future" edits, Postgres with a range exclusion constraint.
+
+---
+
+## The longer version
+
 Ten decisions, in the order they mattered. Each is something the brief either
 left open or made contradictory, plus what I did and why.
 
