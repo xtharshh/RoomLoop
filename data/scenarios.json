@@ -1,0 +1,223 @@
+{
+  "$comment": "Acceptance scenarios for RoomLoop. Each one is executed against a fresh in-memory database by tests/test_scenarios.py. They are chosen to hit the behaviours most likely to be wrong: half-open overlap, weekly wall-clock recurrence across two different DST transitions, skip-vs-rollback, and ambiguous input.",
+  "scenarios": [
+    {
+      "name": "Back-to-back bookings are not a conflict",
+      "requirement": "R4",
+      "why": "The most common off-by-one in interval logic is treating end == start as an overlap. A room is booked until 10:00, not through 10:00.",
+      "given": [
+        {"room_id": 1, "user": "mira@example.com", "start": "2026-11-02T09:00:00", "end": "2026-11-02T10:00:00"}
+      ],
+      "when": {
+        "kind": "single",
+        "room_id": 1, "user": "jonas@example.com",
+        "start": "2026-11-02T10:00:00", "end": "2026-11-02T11:00:00"
+      },
+      "expect": {"status": 201, "booking_start": "2026-11-02T10:00:00", "bookings_total": 2}
+    },
+    {
+      "name": "A one-minute overlap is still a conflict",
+      "requirement": "R4",
+      "why": "Guards the opposite mistake: being too permissive at the boundary.",
+      "given": [
+        {"room_id": 1, "user": "mira@example.com", "start": "2026-11-02T09:00:00", "end": "2026-11-02T10:00:00"}
+      ],
+      "when": {
+        "kind": "single",
+        "room_id": 1, "user": "jonas@example.com",
+        "start": "2026-11-02T09:59:00", "end": "2026-11-02T11:00:00"
+      },
+      "expect": {"status": 409, "error_code": "SLOT_UNAVAILABLE", "bookings_total": 1}
+    },
+    {
+      "name": "The same instant written with a different offset still conflicts",
+      "requirement": "R4, C1",
+      "why": "Clients mix naive local and UTC. 09:00 Berlin is 08:00Z, so a request stated in Zulu must collide with the naive one.",
+      "given": [
+        {"room_id": 1, "user": "mira@example.com", "start": "2026-11-02T09:00:00", "end": "2026-11-02T10:00:00"}
+      ],
+      "when": {
+        "kind": "single",
+        "room_id": 1, "user": "jonas@example.com",
+        "start": "2026-11-02T08:30:00Z", "end": "2026-11-02T09:30:00Z"
+      },
+      "expect": {"status": 409, "error_code": "SLOT_UNAVAILABLE", "bookings_total": 1}
+    },
+    {
+      "name": "Berlin fall-back keeps the 09:00 wall clock and moves the offset",
+      "requirement": "R3",
+      "why": "Berlin leaves CEST on 2026-10-25. A naive-instant design would either shift the meeting to 08:00 or 10:00, or silently store inconsistent wall clocks.",
+      "given": [],
+      "when": {
+        "kind": "recurring",
+        "room_id": 1, "user": "platform@example.com",
+        "start": "2026-10-12T09:00:00", "end": "2026-10-12T10:00:00",
+        "repeat_until": "2026-11-02"
+      },
+      "expect": {
+        "status": 201,
+        "created_count": 4,
+        "skipped_count": 0,
+        "created_starts": [
+          "2026-10-12T09:00:00", "2026-10-19T09:00:00", "2026-10-26T09:00:00", "2026-11-02T09:00:00"
+        ],
+        "created_utc": [
+          "2026-10-12T07:00:00Z", "2026-10-19T07:00:00Z", "2026-10-26T08:00:00Z", "2026-11-02T08:00:00Z"
+        ],
+        "created_offsets": ["+02:00", "+02:00", "+01:00", "+01:00"]
+      }
+    },
+    {
+      "name": "Denver crosses DST on its own date and keeps 09:00 local",
+      "requirement": "R3",
+      "why": "Denver leaves MDT on 2026-11-01, a week after Berlin. Reusing Berlin's transition for both offices is the bug behind the 'Denver was an hour off' complaint.",
+      "given": [],
+      "when": {
+        "kind": "recurring",
+        "room_id": 4, "user": "design@example.com",
+        "start": "2026-10-19T09:00:00", "end": "2026-10-19T10:00:00",
+        "repeat_until": "2026-11-09"
+      },
+      "expect": {
+        "status": 201,
+        "created_count": 4,
+        "created_starts": [
+          "2026-10-19T09:00:00", "2026-10-26T09:00:00", "2026-11-02T09:00:00", "2026-11-09T09:00:00"
+        ],
+        "created_utc": [
+          "2026-10-19T15:00:00Z", "2026-10-26T15:00:00Z", "2026-11-02T16:00:00Z", "2026-11-09T16:00:00Z"
+        ],
+        "created_offsets": ["-06:00", "-06:00", "-07:00", "-07:00"]
+      }
+    },
+    {
+      "name": "A spring-forward gap is shifted forward and reported",
+      "requirement": "R3",
+      "why": "2027-03-28 02:30 does not exist in Berlin. Failing the whole series is unhelpful; silently booking 02:30 is wrong. We move it and say so.",
+      "given": [],
+      "when": {
+        "kind": "recurring",
+        "room_id": 1, "user": "jonas@example.com",
+        "start": "2027-03-21T02:30:00", "end": "2027-03-21T03:00:00",
+        "repeat_until": "2027-03-29"
+      },
+      "expect": {
+        "status": 201,
+        "created_count": 2,
+        "created_starts": ["2027-03-21T02:30:00", "2027-03-28T03:30:00"],
+        "warning_codes": ["DST_GAP_SHIFTED"]
+      }
+    },
+    {
+      "name": "One clashing occurrence is skipped, the rest are saved",
+      "requirement": "R2",
+      "why": "The core PM requirement: a single clash must not block a six-month series, and the caller must be told exactly which week was dropped.",
+      "given": [
+        {"room_id": 1, "user": "board@example.com", "start": "2026-11-16T09:15:00", "end": "2026-11-16T09:45:00"}
+      ],
+      "when": {
+        "kind": "recurring",
+        "room_id": 1, "user": "platform@example.com",
+        "start": "2026-11-02T09:00:00", "end": "2026-11-02T10:00:00",
+        "repeat_until": "2026-11-30"
+      },
+      "expect": {
+        "status": 201,
+        "created_count": 4,
+        "skipped_count": 1,
+        "skipped_starts": ["2026-11-16T09:00:00"],
+        "skipped_reason": "ROOM_BUSY",
+        "bookings_total": 5
+      }
+    },
+    {
+      "name": "Strict mode rolls the whole series back on one clash",
+      "requirement": "R1",
+      "why": "All-or-nothing must be atomic, not 'mostly': the non-conflicting weeks must not survive the failure.",
+      "given": [
+        {"room_id": 1, "user": "board@example.com", "start": "2026-11-16T09:15:00", "end": "2026-11-16T09:45:00"}
+      ],
+      "when": {
+        "kind": "recurring",
+        "room_id": 1, "user": "platform@example.com",
+        "start": "2026-11-02T09:00:00", "end": "2026-11-02T10:00:00",
+        "repeat_until": "2026-11-30",
+        "conflict_policy": "fail"
+      },
+      "expect": {
+        "status": 409,
+        "error_code": "SERIES_CONFLICT_FAIL_FAST",
+        "bookings_total": 1,
+        "series_total": 0
+      }
+    },
+    {
+      "name": "A fully clashing series saves nothing",
+      "requirement": "R1, R2",
+      "why": "Skipping every occurrence would silently create an empty series. That is worse than an error.",
+      "given": [
+        {"room_id": 1, "user": "a@example.com", "start": "2026-11-02T09:00:00", "end": "2026-11-02T10:00:00"},
+        {"room_id": 1, "user": "b@example.com", "start": "2026-11-09T09:00:00", "end": "2026-11-09T10:00:00"},
+        {"room_id": 1, "user": "c@example.com", "start": "2026-11-16T09:00:00", "end": "2026-11-16T10:00:00"}
+      ],
+      "when": {
+        "kind": "recurring",
+        "room_id": 1, "user": "platform@example.com",
+        "start": "2026-11-02T09:00:00", "end": "2026-11-02T10:00:00",
+        "repeat_until": "2026-11-16"
+      },
+      "expect": {
+        "status": 409,
+        "error_code": "SERIES_FULLY_CONFLICTED",
+        "bookings_total": 3,
+        "series_total": 0
+      }
+    },
+    {
+      "name": "A clash in another room never affects this series",
+      "requirement": "R4",
+      "why": "Conflict scoping is per room. A busy room 3 must not skip room 1's weeks.",
+      "given": [
+        {"room_id": 3, "user": "ops@example.com", "start": "2026-11-09T09:00:00", "end": "2026-11-09T10:00:00"}
+      ],
+      "when": {
+        "kind": "recurring",
+        "room_id": 1, "user": "platform@example.com",
+        "start": "2026-11-02T09:00:00", "end": "2026-11-02T10:00:00",
+        "repeat_until": "2026-11-16"
+      },
+      "expect": {"status": 201, "created_count": 3, "skipped_count": 0}
+    },
+    {
+      "name": "Repeat-until is inclusive and only covers matching weekdays",
+      "requirement": "R3",
+      "why": "Off-by-one on the end date silently shortens or lengthens a series by a week, which is invisible until someone shows up to a locked room.",
+      "given": [],
+      "when": {
+        "kind": "recurring",
+        "room_id": 2, "user": "mira@example.com",
+        "start": "2026-11-02T14:00:00", "end": "2026-11-02T15:00:00",
+        "repeat_until": "2026-11-16"
+      },
+      "expect": {
+        "status": 201,
+        "created_count": 3,
+        "created_starts": ["2026-11-02T14:00:00", "2026-11-09T14:00:00", "2026-11-16T14:00:00"]
+      }
+    },
+    {
+      "name": "A cancelled instance frees its slot for re-booking",
+      "requirement": "R2, cancellation",
+      "why": "Cancellation must remove the booking from conflict resolution, otherwise the room stays 'busy forever' — the exact complaint from the office manager.",
+      "given": [
+        {"room_id": 1, "user": "mira@example.com", "start": "2026-11-02T09:00:00", "end": "2026-11-02T10:00:00", "cancel": true}
+      ],
+      "when": {
+        "kind": "single",
+        "room_id": 1, "user": "jonas@example.com",
+        "start": "2026-11-02T09:00:00", "end": "2026-11-02T10:00:00"
+      },
+      "expect": {"status": 201, "bookings_total": 1}
+    }
+  ]
+}
