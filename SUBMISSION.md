@@ -4,7 +4,7 @@ Take-home for Junior Software Development Engineer, Round 2.
 
 | | |
 | --- | --- |
-| **Repository** | https://github.com/xtharshh/auricai |
+| **Repository** | https://github.com/xtharshh/RoomLoop |
 | **Language / stack** | Python 3.11+, FastAPI, SQLite (`sqlite3` + `zoneinfo` from stdlib), zero-build UI |
 | **Tests** | 92, `python -m pytest -q` (~2s) |
 | **Runtime dependencies** | 2 (`fastapi`, `uvicorn`) plus `tzdata` for Windows |
