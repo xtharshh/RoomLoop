@@ -122,3 +122,15 @@ office manager will ask for next.
 **"What would you do with another day?"**
 Series editing with "this and future" semantics, calendar invites, and a
 `/availability/week` endpoint so the dashboard stops making seven calls.
+
+**"Did you use AI?"**
+Yes, as a pair programmer — scaffold, CSS, and brainstorming DST edge cases. It
+was right about structure and wrong about semantics six times, and each of those
+is a row in `DECISIONS.md` §10 with the test that pins it. The two I would point
+at: it returned UTC strings in the legacy field, which would have broken the
+nightly report silently, and it used implicit SQLite transactions, so my
+"all-or-nothing" claim was never actually exercised until I fixed it.
+
+If they push: the interesting answer is not *whether* AI was used, it is *which
+parts I refused to take on trust*. Time, transaction boundaries, and error
+mapping — because those fail quietly.

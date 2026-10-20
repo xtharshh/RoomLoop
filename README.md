@@ -155,6 +155,32 @@ first instant; non-existent spring-forward times shift forward with a
 query filters `cancelled_at IS NULL`, so a cancelled series can be re-booked
 immediately. Past instances stay `confirmed` — that is what reporting expects.
 
+## How this was verified
+
+The parts of this service that are easy to get plausibly wrong are the parts
+that are pinned by tests, and the two defects that mattered most were only found
+by running it.
+
+| Check | What it proves |
+| --- | --- |
+| `92 tests`, `pytest -q` in ~2s | Every requirement and constraint has an executable definition |
+| `data/scenarios.json` (12 scenarios, each with a `why`) | The edge cases are reviewable as data, not buried in test code |
+| `tests/test_concurrency.py` | Eight racing requests at one slot, exactly one wins — R1 is real, not asserted |
+| Berlin **and** Denver around their own DST dates | The offset moves, the wall clock does not |
+| A live browser run of every console flow | Rows, pills, drawers and error states render from real responses; no mocks |
+| A real Windows install | Caught the missing IANA database, which Linux never exposes |
+
+Two of the bugs fixed here were invisible from reading the code: the SQLite
+transaction bug only appeared under concurrent writes, and the timezone gap only
+appeared on a host without the OS database. Both came from running the thing.
+
+AI was used as a pair programmer, and it was dependable for structure while
+being wrong about semantics — six times, in ways that would have shipped quietly.
+[DECISIONS.md §10](DECISIONS.md#10-where-ai-helped-and-what-it-got-wrong) lists
+each defect, the damage it would have caused, the fix, and the test that now
+pins it. The review effort went exactly where the risk was: anything touching
+time, transaction boundaries, or error mapping.
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
@@ -202,7 +228,7 @@ roomloop/
   seed.py         CLI: python -m roomloop.seed
   static/         console (index.html, styles.css, app.js) — no build step
 data/scenarios.json   acceptance scenarios with rationale
-tests/          84 tests: domain, API, scenarios, concurrency, UI shell
+tests/          92 tests: domain, API, scenarios, concurrency, environment, UI shell
 docs/API.md      endpoint reference and error codes
 DECISIONS.md     trade-offs, open questions, AI usage, what is missing
 ```
