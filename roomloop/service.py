@@ -241,9 +241,6 @@ class BookingService:
             if replay is not None:
                 return replay, True
 
-        created: list[dict] = []
-        skipped: list[dict] = []
-
         with self.db.transaction() as conn:
             if idempotency_key:
                 replay = self._check_idempotency(idempotency_key, fingerprint, series=True, conn=conn)
@@ -251,46 +248,9 @@ class BookingService:
                     return replay, True
 
             now = utc_now_epoch()
-            accepted: list[Occurrence] = []
-            for occurrence in occurrences:
-                start_epoch = int(occurrence.start_utc.timestamp())
-                end_epoch = int(occurrence.end_utc.timestamp())
-                conflicts = self.db.conflicting_bookings(conn, room_id, start_epoch, end_epoch)
-                # Two instances of the same request can never overlap (7 days
-                # apart, max 24h), but check anyway so the rule is explicit.
-                in_request = next(
-                    (
-                        other
-                        for other in accepted
-                        if other.start_utc < occurrence.end_utc and occurrence.start_utc < other.end_utc
-                    ),
-                    None,
-                )
-                if in_request is not None:
-                    skipped.append(
-                        {
-                            "occurrence_index": occurrence.index,
-                            "start": naive_iso(occurrence.start_local),
-                            "end": naive_iso(occurrence.end_local),
-                            "reason": "OVERLAPS_SIBLING_INSTANCE",
-                            "conflicts_with": {"occurrence_index": in_request.index},
-                        }
-                    )
-                    continue
-                if conflicts:
-                    skipped.append(
-                        {
-                            "occurrence_index": occurrence.index,
-                            "start": naive_iso(occurrence.start_local),
-                            "end": naive_iso(occurrence.end_local),
-                            "reason": "ROOM_BUSY",
-                            "conflicts_with": [self._conflict_payload(room, row) for row in conflicts],
-                        }
-                    )
-                    continue
-                accepted.append(occurrence)
+            accepted, skipped = self._plan_occurrences(conn, room, occurrences)
 
-            if dropped := len(skipped):
+            if skipped:
                 if not accepted:
                     raise SeriesFullyConflicted(
                         "Every occurrence conflicts with an existing booking, so nothing was saved",
@@ -298,7 +258,7 @@ class BookingService:
                     )
                 if conflict_policy == "fail":
                     raise SeriesConflictFailFast(
-                        f"{dropped} of {len(occurrences)} occurrences conflict; "
+                        f"{len(skipped)} of {len(occurrences)} occurrences conflict; "
                         "nothing was saved (conflict_policy=fail)",
                         details={"occurrences": len(occurrences), "skipped": skipped},
                     )
@@ -316,35 +276,10 @@ class BookingService:
                 fingerprint=fingerprint,
                 created_at=now,
             )
-
-            for occurrence in accepted:
-                booking_id = self.db.insert_booking(
-                    conn,
-                    room_id=room_id,
-                    user=user,
-                    start_at=int(occurrence.start_utc.timestamp()),
-                    end_at=int(occurrence.end_utc.timestamp()),
-                    series_id=series_id,
-                    occurrence_index=occurrence.index,
-                    created_at=now,
-                )
-                created.append(
-                    {
-                        **project_booking(
-                            {
-                                "id": booking_id,
-                                "room_id": room_id,
-                                "user": user,
-                                "start_at": int(occurrence.start_utc.timestamp()),
-                                "end_at": int(occurrence.end_utc.timestamp()),
-                                "series_id": series_id,
-                                "occurrence_index": occurrence.index,
-                            },
-                            tz_name,
-                        ),
-                        "utc_offset": _offset(occurrence.start_utc, tz_name),
-                    }
-                )
+            created = self._insert_instances(
+                conn, series_id=series_id, room=room, user=user,
+                occurrences=accepted, created_at=now,
+            )
 
             self.db.audit(
                 conn,
@@ -406,6 +341,94 @@ class BookingService:
             },
             False,
         )
+
+    # ---------------------------------------------------------- series helpers
+    def _plan_occurrences(
+        self, conn, room: dict, occurrences: list[Occurrence]
+    ) -> tuple[list[Occurrence], list[dict]]:
+        """Split requested occurrences into accepted and skipped.
+
+        Nothing is written here — this is the "what would happen" pass that runs
+        inside the same transaction as the inserts, so the conflict checks and
+        the writes cannot be separated by another request.
+        """
+        accepted: list[Occurrence] = []
+        skipped: list[dict] = []
+        for occurrence in occurrences:
+            start_epoch = int(occurrence.start_utc.timestamp())
+            end_epoch = int(occurrence.end_utc.timestamp())
+            conflicts = self.db.conflicting_bookings(conn, room["id"], start_epoch, end_epoch)
+            # Two instances of one weekly request cannot overlap (7 days apart,
+            # max 24h), but the rule is stated explicitly rather than assumed.
+            in_request = next(
+                (
+                    other
+                    for other in accepted
+                    if other.start_utc < occurrence.end_utc and occurrence.start_utc < other.end_utc
+                ),
+                None,
+            )
+            if in_request is not None:
+                skipped.append(
+                    {
+                        "occurrence_index": occurrence.index,
+                        "start": naive_iso(occurrence.start_local),
+                        "end": naive_iso(occurrence.end_local),
+                        "reason": "OVERLAPS_SIBLING_INSTANCE",
+                        "conflicts_with": {"occurrence_index": in_request.index},
+                    }
+                )
+                continue
+            if conflicts:
+                skipped.append(
+                    {
+                        "occurrence_index": occurrence.index,
+                        "start": naive_iso(occurrence.start_local),
+                        "end": naive_iso(occurrence.end_local),
+                        "reason": "ROOM_BUSY",
+                        "conflicts_with": [self._conflict_payload(room, row) for row in conflicts],
+                    }
+                )
+                continue
+            accepted.append(occurrence)
+        return accepted, skipped
+
+    def _insert_instances(
+        self, conn, *, series_id: int, room: dict, user: str,
+        occurrences: list[Occurrence], created_at: int,
+    ) -> list[dict]:
+        created: list[dict] = []
+        for occurrence in occurrences:
+            start_at = int(occurrence.start_utc.timestamp())
+            end_at = int(occurrence.end_utc.timestamp())
+            booking_id = self.db.insert_booking(
+                conn,
+                room_id=room["id"],
+                user=user,
+                start_at=start_at,
+                end_at=end_at,
+                series_id=series_id,
+                occurrence_index=occurrence.index,
+                created_at=created_at,
+            )
+            created.append(
+                {
+                    **project_booking(
+                        {
+                            "id": booking_id,
+                            "room_id": room["id"],
+                            "user": user,
+                            "start_at": start_at,
+                            "end_at": end_at,
+                            "series_id": series_id,
+                            "occurrence_index": occurrence.index,
+                        },
+                        room["timezone"],
+                    ),
+                    "utc_offset": _offset(occurrence.start_utc, room["timezone"]),
+                }
+            )
+        return created
 
     # --------------------------------------------------------------- cancelling
     def cancel(
