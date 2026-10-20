@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 400" width="1000" height="400" role="img"
+     aria-label="Diagram: the Berlin 09:00 series keeps its wall clock while the UTC instant moves from 07:00Z to 08:00Z when DST ends.">
+  <defs>
+    <linearGradient id="wall" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#67e8f9"/><stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+    <linearGradient id="utc" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#a78bfa"/><stop offset="1" stop-color="#c084fc"/>
+    </linearGradient>
+    <radialGradient id="bgGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#818cf8" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#818cf8" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1000" height="400" rx="18" fill="#0a0e18"/>
+  <ellipse cx="500" cy="200" rx="520" ry="230" fill="url(#bgGlow)"/>
+  <rect x="1" y="1" width="998" height="398" rx="18" fill="none" stroke="#ffffff" stroke-opacity="0.09"/>
+
+  <text x="44" y="54" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif"
+        font-size="21" font-weight="650" fill="#f0f4ff">Same wall clock. Different instant.</text>
+  <text x="44" y="78" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif"
+        font-size="13" fill="#8b97ad">Weekly 09:00 in Berlin. DST ends Sunday 25 October 2026.</text>
+
+  <!-- DST boundary -->
+  <path d="M700 104v236" stroke="#fb7185" stroke-opacity="0.5" stroke-width="1.4" stroke-dasharray="5 5"/>
+  <text x="700" y="98" text-anchor="middle" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif"
+        font-size="11.5" fill="#fb7185" fill-opacity="0.9">clocks go back · +02:00 → +01:00</text>
+
+  <!-- week ticks -->
+  <g font-family="'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace" font-size="11" fill="#5d677c">
+    <text x="248" y="344" text-anchor="middle">Mon 12 Oct</text>
+    <text x="396" y="344" text-anchor="middle">Mon 19 Oct</text>
+    <text x="544" y="344" text-anchor="middle">Mon 26 Oct</text>
+    <text x="788" y="344" text-anchor="middle">Mon 2 Nov</text>
+  </g>
+
+  <!-- ROW A: wall clock -->
+  <text x="44" y="146" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif"
+        font-size="13" font-weight="600" fill="#c7d3e8">Wall clock</text>
+  <text x="44" y="164" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif"
+        font-size="11" fill="#6b768d">what people see</text>
+
+  <path d="M248 140h540" stroke="url(#wall)" stroke-width="2.6" stroke-linecap="round"/>
+  <g fill="#0a0e18" stroke="#67e8f9" stroke-width="2.4">
+    <circle cx="248" cy="140" r="6.5"/>
+    <circle cx="396" cy="140" r="6.5"/>
+    <circle cx="544" cy="140" r="6.5"/>
+    <circle cx="788" cy="140" r="6.5"/>
+  </g>
+  <g font-family="'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace" font-size="12" fill="#b9f4ff">
+    <text x="248" y="118" text-anchor="middle">09:00</text>
+    <text x="396" y="118" text-anchor="middle">09:00</text>
+    <text x="544" y="118" text-anchor="middle">09:00</text>
+    <text x="788" y="118" text-anchor="middle">09:00</text>
+  </g>
+
+  <!-- ROW B: UTC instant -->
+  <text x="44" y="242" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif"
+        font-size="13" font-weight="600" fill="#c7d3e8">UTC instant</text>
+  <text x="44" y="260" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif"
+        font-size="11" fill="#6b768d">what we store</text>
+
+  <path d="M248 250h282v-34h258" fill="none" stroke="url(#utc)" stroke-width="2.6"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <g fill="#0a0e18" stroke="#a78bfa" stroke-width="2.4">
+    <circle cx="248" cy="250" r="6.5"/>
+    <circle cx="396" cy="250" r="6.5"/>
+    <circle cx="544" cy="216" r="6.5"/>
+    <circle cx="788" cy="216" r="6.5"/>
+  </g>
+  <g font-family="'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace" font-size="12" fill="#ddd0ff">
+    <text x="248" y="276" text-anchor="middle">07:00Z</text>
+    <text x="396" y="276" text-anchor="middle">07:00Z</text>
+    <text x="544" y="200" text-anchor="middle">08:00Z</text>
+    <text x="788" y="200" text-anchor="middle">08:00Z</text>
+  </g>
+
+  <!-- footnote -->
+  <text x="44" y="376" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif"
+        font-size="11" fill="#6b768d">
+    The naive string alone cannot express this. Denver crosses on 1 November, a week later — same rule, different date.
+  </text>
+</svg>
