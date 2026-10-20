@@ -84,6 +84,15 @@ function fmtDuration(minutes) {
 
 function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
 
+/** Build a query string with proper encoding instead of string concatenation. */
+function qs(params) {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') search.set(key, value);
+  });
+  return `?${search.toString()}`;
+}
+
 function initials(name) {
   const clean = String(name || '?').split('@')[0].replace(/[._-]/g, ' ');
   return clean.split(' ').filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('');
@@ -219,7 +228,8 @@ function visibleRooms() {
 
 async function loadDay(day, { force = false } = {}) {
   if (!force && state.dayCache.has(day)) return state.dayCache.get(day);
-  const payload = await api(`/availability/day?day=${day}&day_start=08:00&day_end=19:00&slot_minutes=30`);
+  const query = qs({ day, day_start: '08:00', day_end: '19:00', slot_minutes: 30 });
+  const payload = await api(`/availability/day${query}`);
   state.dayCache.set(day, payload);
   return payload;
 }
