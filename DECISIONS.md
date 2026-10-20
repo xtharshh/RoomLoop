@@ -10,7 +10,7 @@
 6. **Cancelling a series is soft and immediate** → future instances marked cancelled, past kept for reporting, every conflict query ignores cancelled rows so the room frees at once. Idempotent, with a `scope=single` exception hatch.
 7. **Racing writers are safe by construction** → conflict check plus inserts inside one `BEGIN IMMEDIATE`; proven by racing eight requests at one slot.
 8. **PM questions I would ask first** → cancel-from-now vs cancel-from-occurrence; which timezone the nightly report renders; whether the `3, 4, 9, 17` gaps are real; weekly-only vs biweekly; who is notified when a week is skipped.
-9. **AI helped most with scaffolding and test matrices; it was wrong about contracts** → it returned UTC as the legacy format, used implicit transactions (nested `BEGIN` crash), reported an impossible 02:30 that it had actually stored as 03:30, and reused one error code for unrelated failures. Each is now pinned by a test.
+9. **AI was dependable for structure, unreliable for semantics** → it produced six wrong contracts (UTC leaking into the legacy format, implicit transactions, an impossible 02:30, one shared error code, the sample ids, and assuming the OS ships a timezone database). Each is pinned by a named test; the table is in §10.
 10. **Deliberately left out** → auth, notifications, series editing, Postgres exclusion constraints, pagination. Next, in order: SSO identity, "this and future" edits, Postgres with a range exclusion constraint.
 11. **Portability is a correctness issue, not a chore** → `zoneinfo` silently depends on the host's IANA database; Windows has none. It is now a pinned dependency, a distinct error code, and a `/health` field, because "works on my machine" for a timezone-heavy service means the code is wrong somewhere.
 
@@ -146,38 +146,33 @@ and asserts none interleave. On Postgres I would add an exclusion constraint on
 
 ### 10. Where AI helped, and what it got wrong
 
-I used AI to scaffold FastAPI + SQLite, to draft the console, and to enumerate
-DST edge cases. It was genuinely faster at boilerplate and at suggesting test
-matrices. It was confidently wrong about several things that mattered, and each
-one is now covered by a test:
+I used AI as a pair programmer: to scaffold FastAPI + SQLite, to draft the
+console's markup and CSS, and to brainstorm DST edge cases I might have missed.
+It was fast at boilerplate and generous at generating test matrices.
 
-1. **Returned UTC naive strings as the legacy format.** That silently changes
-   every reported booking time and breaks C1. Corrected to office wall clock,
-   with additive UTC fields instead.
-2. **Used implicit SQLite transactions** (`isolation_level` default), so an
-   explicit `BEGIN IMMEDIATE` raised "cannot start a transaction within a
-   transaction". Corrected to autocommit connections with explicit
-   `BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK`, plus `busy_timeout`.
-3. **Kept the impossible wall clock in DST-gap occurrences** — it stored 03:30
-   but reported 02:30, so the API lied about its own data. Corrected so the
-   resolved time is reported and the warning names the occurrences.
-4. **Reused one error code for everything.** A single-booking clash returned the
-   series error. Split into `SLOT_UNAVAILABLE`, `SERIES_CONFLICT_FAIL_FAST`,
-   `SERIES_FULLY_CONFLICTED`.
-5. **Trusted the sample ids** `3, 4, 9, 17` as the room table while also
-   implementing R5's `1..N` iteration. Caught by writing the availability test.
-6. **Assumed the IANA timezone database always exists.** It does on Linux, not on
-   Windows. The first user to run this on Windows got HTTP 422
-   `Unknown timezone 'Europe/Berlin'` on `/availability`, because a missing OS
-   package was being reported as a bad request. Fixed three ways: `tzdata` is now
-   a dependency, a missing database is its own error (`TZ_DATA_MISSING`, 500, with
-   the install command in the message), and `/health` reports
-   `timezone_data: ok|missing` so the problem is visible before any booking
-   fails. `tests/test_environment.py` reproduces a database-less host.
+It was unreliable about **contracts** — the places where "looks reasonable" and
+"is correct" diverge. Six things it produced were wrong. Each is now pinned by a
+test, so none of them can come back:
 
-The pattern: AI was reliable for structure and unreliable about *contracts* —
-timestamp meaning, transaction boundaries, error taxonomy. Those are the parts I
-reviewed line by line and pinned with tests.
+| What it produced | Why it would have hurt | What I did instead | Pinned by |
+| --- | --- | --- | --- |
+| Returned UTC naive strings as the legacy `start`/`end` | Silently shifts every reported booking time and breaks C1 for the reporting team | Legacy fields render the office wall clock; UTC moved to additive `start_utc` | `test_create_returns_legacy_naive_local_timestamps` |
+| Used implicit SQLite transactions | Explicit `BEGIN IMMEDIATE` raised *"cannot start a transaction within a transaction"*, so R1's atomicity claim was never actually exercised | Autocommit connections with explicit `BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK` and a `busy_timeout` | `tests/test_concurrency.py` |
+| Stored 03:30 for a spring-forward gap but reported 02:30 | The API contradicted its own data, and a client would have booked a time that does not exist | The resolved time is authoritative; the requested one is reported as `DST_GAP_SHIFTED` | `test_berlin_spring_forward_gap_is_shifted_and_flagged` |
+| Reused one error code for unrelated failures | A single-booking clash looked like a series rollback; callers cannot branch on it | `SLOT_UNAVAILABLE`, `SERIES_CONFLICT_FAIL_FAST`, `SERIES_FULLY_CONFLICTED` | `test_overlap_is_rejected_with_409_and_the_blocker` |
+| Treated the sample room ids `3, 4, 9, 17` as the table | Contradicts R5's `1..N` iteration; availability silently skips gaps | Sequential seed ids `1..5`, sample treated as shape only, gap question raised with the PM | `test_room_ids_are_sequential_for_iteration` |
+| Assumed the IANA timezone database always exists | It does on Linux, not on Windows. The first Windows run returned 422 `Unknown timezone 'Europe/Berlin'` — a missing OS package reported as a bad request | `tzdata` is a dependency, missing data is `TZ_DATA_MISSING` (500) with the install command, `/health` reports `timezone_data: "ok"` or `"missing"` | `tests/test_environment.py` |
+
+The pattern is the useful part: AI was dependable for **structure** (routes,
+schema, layout) and unreliable for **semantics** (what a timestamp means, where a
+transaction begins and ends, which error is which). So that is where my review
+time went — every line that touched time, transaction boundaries or error
+mapping, with a failing test written before any of it was trusted.
+
+Two of those defects were invisible from reading. The SQLite transaction bug only
+appeared under concurrent writes, and the timezone gap only appeared on a host
+without the OS database. Both were found by running the service, not reviewing it
+— which is the argument for running it.
 
 ### Questions I would ask the PM before this ships
 
